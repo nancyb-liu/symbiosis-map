@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Industrial Symbiosis Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--bg:#f4f5f1;--panel:#fff;--ink:#1f2a24;--muted:#66736b;--line:#dfe3db;--accent:#2f6b4f;--accent2:#e8f1ec;--warn:#b3541e}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);height:100vh;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:14px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:16px;margin:0;font-weight:650}
+h2{font-size:15px;margin:0 0 8px}
+h3{font-size:13px;margin:14px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+nav{display:flex;gap:2px}
+nav button{border:0;background:none;padding:7px 12px;border-radius:6px;cursor:pointer;font:inherit;color:var(--muted)}
+nav button.on{background:var(--accent2);color:var(--accent);font-weight:600}
+.filters{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+select,input,textarea{font:inherit;padding:5px 7px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink);max-width:100%}
+.filters select{max-width:150px}
+button.b,label.b{font:inherit;padding:6px 11px;border:1px solid var(--line);border-radius:5px;background:#fff;cursor:pointer;display:inline-block}
+button.b:hover,label.b:hover{border-color:var(--accent)}
+button.p,label.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.s{padding:2px 7px;font-size:12px}
+main{flex:1;min-height:0;position:relative}
+section{display:none;height:100%;overflow:auto;padding:16px}
+section.on{display:block}
+#tab-map.on{display:flex;padding:0;overflow:hidden}
+#map{flex:1;min-width:0;background:#e9ece6}
+#side{width:350px;max-width:45%;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:12px 14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:16px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+td.n{text-align:right;white-space:nowrap}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;align-items:end}
+.form label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+.form .wide{grid-column:span 2}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;background:#eee;white-space:nowrap}
+.tag.potential{background:#fff3d6;color:#7a5a00}.tag.discussion{background:#dcebfb;color:#1d4f86}
+.tag.established{background:#d9efe1;color:#1e6140}.tag.rejected{background:#eee;color:#888}
+.tag.sni{background:#efe6f5;color:#5d3b78}
+.stream{padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.stream:hover{background:#fafbf8}
+.muted{color:var(--muted)}.small{font-size:12px}
+.banner{background:#fff3d6;border-bottom:1px solid #ecd9a0;padding:6px 16px;font-size:13px;display:none}
+.legend{background:#fff;padding:8px 10px;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.25);font-size:12px;line-height:1.7;max-height:45vh;overflow:auto}
+#sankey text{font-size:12px;fill:var(--ink)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+code{background:#f0f1ec;padding:1px 4px;border-radius:3px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Industrial Symbiosis Map</h1>
+  <nav id="nav">
+    <button data-t="map" class="on">Map</button>
+    <button data-t="streams">Streams</button>
+    <button data-t="companies">Companies</button>
+    <button data-t="flows">Inputs &amp; outputs</button>
+    <button data-t="data">Data</button>
+  </nav>
+  <div class="filters">
+    <label>Material <select id="f-mat"></select></label>
+    <label>Status <select id="f-status">
+      <option value="active">All except rejected</option><option value="potential">Potential</option>
+      <option value="discussion">Under discussion</option><option value="established">Established</option>
+      <option value="all">All incl. rejected</option></select></label>
+    <label>Basis <select id="f-basis">
+      <option value="all">Confirmed + SNI estimates</option><option value="conf">Confirmed flows only</option><option value="half">At least one side confirmed</option></select></label>
+    <label>Max distance <input id="f-dist" type="number" min="1" style="width:64px"> km</label>
+  </div>
+</header>
+<div class="banner" id="banner"></div>
+<main>
+  <section id="tab-map" class="on">
+    <div id="map"></div>
+    <div id="side"></div>
+  </section>
+
+  <section id="tab-streams">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>Symbiosis streams: supplier → material → receiver</h2>
+        <label class="small muted">Measure <select id="f-unit"></select></label>
+      </div>
+      <div id="sankey"></div>
+      <p class="small muted">With a quantity unit, band width is the matched quantity (the smaller of what is offered and what is needed). With "number of matches", each possible supplier–receiver pair counts as one; use this for SNI estimates, which have no quantities. One output matched to several receivers is counted once per match.</p>
+    </div>
+    <div class="card"><h2>All streams</h2><div id="streams-table"></div></div>
+  </section>
+
+  <section id="tab-companies">
+    <div class="card">
+      <h2 id="c-title">Add company</h2>
+      <form class="form" id="c-form">
+        <input type="hidden" name="id">
+        <label class="wide">Name <input name="name" required></label>
+        <label>SNI code <input name="sni" placeholder="e.g. 10390"></label>
+        <label>Sector (free text) <input name="sector"></label>
+        <label>Municipality <input name="municipality"></label>
+        <label>Employees <input name="emp"></label>
+        <label>Latitude <input name="lat" type="number" step="any" required></label>
+        <label>Longitude <input name="lon" type="number" step="any" required></label>
+        <label class="wide">Notes <input name="notes"></label>
+        <div class="row"><button class="b p">Save</button><button type="button" class="b" id="c-pick">Pick on map</button><button type="button" class="b" id="c-cancel">Clear</button></div>
+      </form>
+    </div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2>Companies</h2><input id="c-search" placeholder="Search name, SNI, municipality…" style="width:260px"></div><div id="c-table"></div></div>
+  </section>
+
+  <section id="tab-flows">
+    <div class="card">
+      <h2 id="fl-title">Add input or output</h2>
+      <form class="form" id="fl-form">
+        <input type="hidden" name="id">
+        <label>Company <input name="companyName" list="companies-list" required placeholder="Type to search…"></label>
+        <label>Direction <select name="dir"><option value="out">Output (waste / by-product)</option><option value="in">Input (resource need)</option></select></label>
+        <label>Material category <input name="material" list="materials" required></label>
+        <label class="wide">Description <input name="desc"></label>
+        <label>Quantity per year <input name="qty" type="number" step="any" min="0"></label>
+        <label>Unit <input name="unit" list="units" value="t/yr"></label>
+        <label class="wide">Current handling / source <input name="handling" placeholder="e.g. incinerated, bought from…"></label>
+        <div class="row"><button class="b p">Save</button><button type="button" class="b" id="fl-cancel">Clear</button></div>
+      </form>
+      <datalist id="companies-list"></datalist>
+      <datalist id="materials"></datalist>
+      <datalist id="units"><option>t/yr</option><option>MWh/yr</option><option>m³/yr</option></datalist>
+      <p class="small muted">Rows tagged <span class="tag sni">SNI estimate</span> were generated from the company's SNI code. Saving one through this form (for example after a site visit, with a real quantity) turns it into a confirmed flow.</p>
+    </div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2>Inputs &amp; outputs</h2><input id="fl-search" placeholder="Search company or material…" style="width:260px"></div><div id="fl-table"></div></div>
+  </section>
+
+  <section id="tab-data">
+    <div class="card">
+      <h2>Import workplaces from SCB</h2>
+      <p class="muted">Load the file written by the SCB script (<code>arbetsstallen_0580.csv</code> and so on), or a point layer exported from QGIS as CSV or GeoJSON. Each workplace becomes its own point, and its likely outputs and inputs are filled in from its SNI codes using the SNI waste lookup table.</p>
+      <div class="row">
+        <label>Import <select id="i-level"><option value="hm">High and medium symbiosis relevance</option><option value="h">High relevance only</option><option value="all">All workplaces</option></select></label>
+        <label><input type="checkbox" id="i-sole" checked> Skip sole traders (enskild firma)</label>
+        <label><input type="checkbox" id="i-flows" checked> Generate estimated flows from SNI</label>
+        <label class="b p">Choose file…<input type="file" id="d-imp-c" accept=".csv,.txt,.geojson,.json" hidden></label>
+      </div>
+      <p class="small muted">Recognised columns: <code>namn</code>/<code>name</code>, <code>sni</code>, <code>sni_alla</code>, <code>kommun_namn</code>, <code>anstkl_text</code>, <code>gatuadress</code>, <code>cfar</code>, <code>enskild_firma</code>, and coordinates as <code>north</code>/<code>east</code> (SWEREF 99 TM is detected and converted) or <code>lat</code>/<code>lon</code>. Rows without coordinates are skipped, and a workplace already loaded (same CFAR number) is not added twice. Import one municipality at a time.</p>
+      <div class="row"><button class="b" id="d-gen">Generate SNI estimates for companies that have no flows yet</button><button class="b" id="d-delsni">Remove all SNI estimates</button></div>
+      <p class="small" id="d-msg" style="color:var(--accent);font-weight:600"></p>
+    </div>
+    <div class="card">
+      <h2>Save and load</h2>
+      <p class="muted">Edits are kept in this browser automatically. Export a project file to back it up, move it to another computer or share it.</p>
+      <div class="row">
+        <button class="b p" id="d-export">Export project (.json)</button>
+        <label class="b">Import project (.json)<input type="file" id="d-import" accept=".json" hidden></label>
+      </div>
+      <h3>Spreadsheet / QGIS exchange (CSV)</h3>
+      <div class="row">
+        <button class="b" id="d-csv-c">Export companies</button>
+        <button class="b" id="d-csv-f">Export inputs &amp; outputs</button>
+        <button class="b" id="d-csv-s">Export streams (filtered)</button>
+        <label class="b">Import inputs &amp; outputs CSV<input type="file" id="d-imp-f" accept=".csv,.txt" hidden></label>
+      </div>
+      <p class="small muted">Input/output columns: <code>company, direction (in/out), material, description, qty, unit, handling</code>; company must match a company name or CFAR number. Use this for flow data from site visits. Comma or semicolon separated.</p>
+      <h3>Reset</h3>
+      <div class="row"><button class="b" id="d-demo">Load demo data</button><button class="b" id="d-clear" style="color:var(--warn)">Delete all data</button></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const KEY = "symbiosis-map-v2";
+const MATS = ["Organic residues","Manure & crop residues","Wood residues","Paper & cardboard","Plastics","Metals","Glass","Mineral & construction","Ash & slag","Sludge","Chemicals & hazardous","Textiles","Electronics","Waste heat","Process water","CO₂","Digestate","Compost"];
+const MAT_COL = ["#6a994e","#8d6e3f","#b08040","#c9a66b","#e09f3e","#455a64","#4db6ac","#9e9d8a","#8a8a8a","#7b5e7b","#c2185b","#9575cd","#00838f","#d1495b","#3a86c8","#5c6f82","#4f772d","#795548"];
+const PALETTE = ["#2f6b4f","#c8553d","#3a6ea5","#b8860b","#7b4b94","#2a9d8f","#8c5a3c","#d17a22","#5d6d7e","#a23b72"];
+const CAT_COL = {"Manure/crop residues":"#8d6e3f","Organic/food":"#6a994e","Wood/biomass":"#b08040","Paper/fibre":"#c9a66b","Plastic/rubber":"#e09f3e","Metal":"#455a64","Mineral/construction":"#9e9d8a","Ash/slag":"#777777","Sludge":"#7b5e7b","Chemicals/hazardous":"#c2185b","Textile":"#9575cd","Electronics":"#00838f","Waste heat":"#d1495b","Waste facility (hub)":"#1b5e20","Low – office/packaging":"#b8bdb6"};
+const STATUS = {potential:"Potential",discussion:"Under discussion",established:"Established",rejected:"Rejected"};
+const REL = {h:"high",m:"medium",l:"low"};
+/* SNI prefix -> [label, main category, relevance h/m/l, output material indexes, input material indexes, typical streams, can use as input] */
+const SNI = {"01":["Crop and animal production","Manure/crop residues","h",[0,1,4],[8,9,13,15,16,17],"Manure, straw, crop residues, silage film, carcasses","Digestate, sewage sludge (P), ash, compost, waste heat, CO2"],"011":["Growing of non-perennial crops","Manure/crop residues","h",[1,4],[8,9,16,17],"Straw, haulm, sorting rejects, film","Digestate, sludge, ash, compost"],"0113":["Growing of vegetables, roots and tubers (incl. greenhouses)","Manure/crop residues","h",[0,1,4],[13,15,16],"Rejected/out-graded vegetables, peel, soil from washing","Waste heat, CO2, digestate"],"012":["Growing of perennial crops","Manure/crop residues","m",[1,4],[16,17],"Pruning residues, fruit rejects","Compost, digestate"],"013":["Plant propagation","Manure/crop residues","m",[1,4],[13,15,17],"Growing media, plant residues","Waste heat, CO2, compost"],"014":["Animal production","Manure/crop residues","h",[0,1,4],[0,2,13],"Manure, slurry, bedding, fallen stock (ABP)","Feed from food by-products, waste heat, bedding (sawdust)"],"015":["Mixed farming","Manure/crop residues","h",[0,1,4],[8,9,16],"Manure, crop residues","Digestate, sludge, ash"],"016":["Support activities to agriculture","Manure/crop residues","m",[1,10],[],"Crop residues, oils, packaging",""],"02":["Forestry and logging","Wood/biomass","h",[2,10],[8],"Logging residues (GROT), bark, oils","Ash (forest recycling)"],"03":["Fishing and aquaculture","Organic/food","m",[0,9],[0,13],"Fish waste, aquaculture sludge","Waste heat (aquaculture), feed"],"05":["Mining of coal and lignite","Mineral/construction","m",[7,10],[],"Waste rock, tailings",""],"06":["Extraction of crude petroleum and natural gas","Chemicals/hazardous","l",[7,10],[],"Drilling muds, oily waste",""],"07":["Mining of metal ores","Mineral/construction","h",[7,10,14],[8],"Waste rock, tailings, process water","Ash/slag for backfill"],"08":["Other mining and quarrying","Mineral/construction","m",[7],[7],"Fines, overburden, washing sludge","Excavated soil, crushed concrete"],"09":["Mining support service activities","Mineral/construction","l",[7,10],[],"Drilling waste, oils",""],"10":["Manufacture of food products","Organic/food","h",[0,3,4,9,13,14],[13],"Food by-products, ABP, process water, packaging","Waste heat, biogas/energy"],"101":["Processing of meat","Organic/food","h",[0,4,9,13,14],[13],"Animal by-products (cat. 1–3), blood, fat, flotation sludge","Waste heat"],"102":["Processing of fish","Organic/food","h",[0,14],[],"Fish waste, process water",""],"103":["Processing of fruit and vegetables","Organic/food","h",[0,9,14],[0],"Peel, rejects, starch-rich process water","Out-graded vegetables (input)"],"104":["Vegetable and animal oils and fats","Organic/food","h",[0,14],[],"Press cake, used oil, bleaching earth",""],"105":["Dairy products","Organic/food","h",[0,9,13,14],[13],"Whey, rinse water, dairy sludge","Waste heat"],"106":["Grain mill and starch products","Organic/food","h",[0,14],[],"Bran, hulls, screenings, starch effluent",""],"107":["Bakery and farinaceous products","Organic/food","h",[0,3,4],[],"Bread/dough waste, packaging",""],"108":["Other food products","Organic/food","h",[0,13,14],[],"Sugar beet pulp, molasses, food residues",""],"109":["Prepared animal feeds","Organic/food","m",[0],[0,1],"Feed residues, dust","Food by-products, grain residues (input)"],"11":["Manufacture of beverages","Organic/food","h",[0,6,13,14,15],[13],"Spent grain, yeast, pomace, fermentation CO2, glass","Waste heat"],"12":["Manufacture of tobacco products","Organic/food","l",[0],[],"Tobacco residues",""],"13":["Manufacture of textiles","Textile","m",[9,10,11,14],[],"Fibre/fabric waste, dyeing effluent, sludge",""],"14":["Manufacture of wearing apparel","Textile","m",[4,11],[],"Cut-offs, rejects",""],"15":["Manufacture of leather and related products","Chemicals/hazardous","m",[0,9,10,11],[],"Trimmings, tanning sludge, chromium waste",""],"16":["Manufacture of wood products","Wood/biomass","h",[2,10],[13],"Sawdust, bark, chips, shavings, treated-wood waste","Waste heat (kiln drying)"],"161":["Sawmilling and planing of wood","Wood/biomass","h",[2],[13],"Sawdust, bark, chips","Waste heat (kilns)"],"17":["Manufacture of paper and paper products","Paper/fibre","h",[2,3,8,9,13,14,15],[2,3],"Fibre sludge, rejects, bark, green liquor sludge, ash, biogenic CO2","Recovered paper, wood residues"],"18":["Printing and reproduction","Paper/fibre","l",[3,10],[3],"Paper offcuts, inks, solvents","Recovered paper"],"19":["Coke and refined petroleum products","Chemicals/hazardous","h",[9,10,13,15],[2,10],"Oily sludge, spent catalysts, CO2","Used oils, biomass feedstock (HVO)"],"20":["Manufacture of chemicals","Chemicals/hazardous","h",[4,10,13,14,15],[10,15],"Process residues, solvents, salts, CO2, excess heat","By-product chemicals, CO2"],"21":["Manufacture of pharmaceuticals","Chemicals/hazardous","m",[0,10,14],[],"Fermentation residues, solvents, APIs",""],"22":["Manufacture of rubber and plastic products","Plastic/rubber","h",[4,10],[4],"Plastic scrap, rubber waste, rejects","Recycled plastics/rubber"],"23":["Other non-metallic mineral products","Mineral/construction","h",[6,7,8,13,15],[6,7,8],"Glass cullet, concrete/brick waste, kiln dust, CO2, excess heat","Ash, slag, gypsum, waste-derived fuels, crushed glass"],"231":["Manufacture of glass","Mineral/construction","h",[6,13,15],[6],"Cullet, filter dust, excess heat","Recycled glass"],"235":["Cement, lime and plaster","Mineral/construction","h",[7,13,15],[7,8],"Kiln dust, CO2, excess heat","Ash, slag, gypsum, waste fuels"],"24":["Manufacture of basic metals","Ash/slag","h",[5,8,10,13,15],[5],"Slag, dust, mill scale, spent pickling acids, excess heat","Metal scrap"],"25":["Manufacture of fabricated metal products","Metal","h",[5,9,10],[5],"Metal swarf/scrap, cutting fluids, surface-treatment sludge","Metal scrap"],"26":["Computer, electronic and optical products","Electronics","m",[5,10,12],[],"Electronic scrap, solvents",""],"27":["Manufacture of electrical equipment","Metal","m",[4,5,10,12],[],"Copper/metal scrap, cable waste, plastics",""],"28":["Manufacture of machinery and equipment","Metal","m",[5,10],[],"Metal scrap, oils, emulsions",""],"29":["Motor vehicles, trailers and semi-trailers","Metal","h",[4,5,10,11],[4,5],"Metal scrap, plastics, paint sludge","Recycled metals/plastics"],"30":["Other transport equipment","Metal","m",[4,5,10],[],"Metal and composite scrap, paints",""],"31":["Manufacture of furniture","Wood/biomass","m",[2,4,10,11],[2],"Wood/board offcuts, fabric, lacquer waste","Recycled wood/board"],"32":["Other manufacturing","Plastic/rubber","l",[4,5],[],"Mixed production waste",""],"33":["Repair and installation of machinery","Metal","m",[5,10,12],[],"Scrap parts, oils",""],"35":["Electricity, gas, steam and air conditioning","Ash/slag","h",[8,13,15],[2,13],"Fly/bottom ash, flue-gas residues, CO2","Wood fuel, waste fuel, waste heat (district heating)"],"351":["Electric power generation and distribution","Ash/slag","h",[8,13,15],[2],"Ash, excess heat","Biomass/waste fuels"],"3521":["Manufacture of gas (incl. biogas)","Waste facility (hub)","h",[0,15,16],[0,1,9],"Digestate, biogenic CO2","Manure, food waste, sludge, crop residues"],"353":["Steam and air-conditioning supply (district heating)","Ash/slag","h",[8,15],[2,13],"Ash, flue-gas residues, CO2","Waste heat, wood residues, waste fuels"],"36":["Water collection, treatment and supply","Sludge","m",[7,9],[],"Waterworks sludge (lime/iron/aluminium)",""],"37":["Sewerage","Sludge","h",[9,13,14,15],[0],"Sewage sludge (P-rich), biogas, effluent heat","Organic waste (co-digestion)"],"38":["Waste collection, treatment and recovery","Waste facility (hub)","h",[0,2,3,4,5,6,7,8,10,11,12],[0,1,2,3,4,5,6,7,8,9,10,11,12],"All streams (hub)","All streams"],"381":["Waste collection","Waste facility (hub)","h",[0,3,4,5,6,7,10,12],[0,1,2,3,4,5,6,7,8,9,10,11,12],"Collected mixed and sorted waste","All streams"],"382":["Waste treatment and disposal (incl. composting, incineration, digestion)","Waste facility (hub)","h",[0,8,9,13,15,16,17],[0],"Ash, digestate, compost, excess heat, CO2","Organic waste, combustible waste"],"383":["Materials recovery","Waste facility (hub)","h",[3,4,5,6,11,12],[3,4,5,6,11,12],"Sorted secondary raw materials","Scrap, sorted fractions"],"39":["Remediation and other waste management","Mineral/construction","m",[7,10],[],"Contaminated soil",""],"41":["Construction of buildings","Mineral/construction","h",[2,3,4,5,7,10],[7],"Concrete, brick, wood, gypsum, insulation","Recycled aggregates, reused materials"],"42":["Civil engineering","Mineral/construction","h",[7],[7,8],"Excavated soil, rock, asphalt","Crushed concrete, ash/slag for roads"],"43":["Specialised construction activities","Mineral/construction","m",[2,4,5,7,10,12],[],"Demolition, cables, insulation, paint",""],"45":["Motor vehicle trade and repair (SNI 2007)","Metal","m",[4,5,10],[],"Oils, batteries, tyres, scrap parts",""],"46":["Wholesale trade","Low – office/packaging","l",[2,3,4],[],"Packaging, pallets",""],"463":["Wholesale of food, beverages and tobacco","Organic/food","m",[0,3,4],[],"Unsold food, packaging",""],"47":["Retail trade","Low – office/packaging","l",[0,3,4],[],"Packaging, unsold goods",""],"471":["Retail sale in non-specialised stores (supermarkets)","Organic/food","m",[0,3,4],[],"Food waste, packaging",""],"472":["Retail sale of food in specialised stores","Organic/food","m",[0,3,4],[],"Food waste, packaging",""],"49":["Land transport","Chemicals/hazardous","l",[4,5,10],[],"Oils, tyres, filters",""],"50":["Water transport","Chemicals/hazardous","l",[10],[],"Oily water, bilge",""],"51":["Air transport","Chemicals/hazardous","l",[10],[],"Oils, de-icing fluids",""],"52":["Warehousing and support for transportation","Low – office/packaging","l",[2,3,4],[],"Packaging, pallets",""],"53":["Postal and courier","Low – office/packaging","l",[3,4],[],"Packaging",""],"55":["Accommodation","Organic/food","m",[0,3,11],[],"Food waste, linen",""],"56":["Food and beverage service","Organic/food","m",[0,3,4,6],[],"Food waste, cooking oil, packaging",""],"58":["Publishing","Low – office/packaging","l",[3],[],"Paper",""],"59":["Motion picture, video and sound","Low – office/packaging","l",[12],[],"",""],"60":["Programming and broadcasting","Low – office/packaging","l",[12],[],"",""],"61":["Telecommunications","Electronics","l",[5,12],[],"Electronic equipment, cables",""],"62":["Computer programming and consultancy","Low – office/packaging","l",[3,12],[],"",""],"631":["Data processing, hosting (data centres)","Waste heat","h",[12,13],[],"Low-grade excess heat, server equipment",""],"63":["Information service activities","Low – office/packaging","l",[12],[],"",""],"64":["Financial services","Low – office/packaging","l",[3,12],[],"",""],"65":["Insurance and pension funding","Low – office/packaging","l",[3,12],[],"",""],"66":["Activities auxiliary to finance","Low – office/packaging","l",[3,12],[],"",""],"68":["Real estate activities","Low – office/packaging","l",[3,7],[],"Bulky waste, renovation",""],"69":["Legal and accounting","Low – office/packaging","l",[3,12],[],"",""],"70":["Head offices and management consultancy","Low – office/packaging","l",[3,12],[],"",""],"71":["Architecture and engineering, testing","Low – office/packaging","l",[3,10],[],"Lab chemicals",""],"72":["Scientific research and development","Chemicals/hazardous","m",[0,10],[],"Lab chemicals, biological waste",""],"73":["Advertising and market research","Low – office/packaging","l",[3],[],"",""],"74":["Other professional and technical activities","Low – office/packaging","l",[3],[],"",""],"75":["Veterinary activities","Chemicals/hazardous","m",[0,10],[],"Clinical waste, ABP",""],"77":["Rental and leasing","Low – office/packaging","l",[4,5],[],"",""],"78":["Employment activities","Low – office/packaging","l",[3],[],"",""],"79":["Travel agency and tour operators","Low – office/packaging","l",[3],[],"",""],"80":["Security and investigation","Low – office/packaging","l",[3],[],"",""],"81":["Services to buildings and landscape","Organic/food","m",[0,2,10],[],"Garden/park waste, cleaning chemicals",""],"813":["Landscape service activities","Organic/food","m",[0,2],[16,17],"Garden and park waste, branches","Compost, digestate"],"82":["Office administrative and support","Low – office/packaging","l",[3],[],"",""],"84":["Public administration and defence","Low – office/packaging","l",[3,12],[],"",""],"85":["Education","Organic/food","l",[0,3,12],[],"Kitchen food waste, paper",""],"86":["Human health activities","Chemicals/hazardous","m",[0,10,11],[],"Clinical/infectious waste, pharmaceuticals, kitchen waste",""],"87":["Residential care activities","Organic/food","l",[0,11],[],"Kitchen food waste, textiles",""],"88":["Social work without accommodation","Low – office/packaging","l",[3],[],"",""],"90":["Creative, arts and entertainment","Low – office/packaging","l",[3],[],"",""],"91":["Libraries, museums and cultural","Low – office/packaging","l",[3],[],"",""],"92":["Gambling and betting","Low – office/packaging","l",[3],[],"",""],"93":["Sports, amusement and recreation","Low – office/packaging","l",[0,3],[],"",""],"9311":["Operation of sports facilities (incl. ice rinks)","Waste heat","m",[13],[],"Excess heat from ice-rink refrigeration",""],"94":["Membership organisations","Low – office/packaging","l",[3],[],"",""],"95":["Repair of computers, household goods (and vehicles, SNI 2025)","Electronics","m",[5,10,11,12],[],"Electronic scrap, spare parts",""],"953":["Repair of motor vehicles (SNI 2025)","Metal","m",[4,5,10],[],"Oils, batteries, tyres, scrap parts",""],"96":["Other personal service activities","Low – office/packaging","l",[10,11],[],"",""],"9601":["Washing and dry-cleaning (laundries)","Chemicals/hazardous","m",[10,11,13,14],[],"Wastewater, solvents, warm effluent",""],"97":["Households as employers","Low – office/packaging","l",[],[],"",""],"98":["Households producing for own use","Low – office/packaging","l",[],[],"",""],"99":["Extraterritorial organisations","Low – office/packaging","l",[],[],"",""]};
+
+function sniRow(code){const d=String(code||"").replace(/\D/g,"");for(let n=Math.min(d.length,5);n>=2;n--){const r=SNI[d.slice(0,n)];if(r)return r;}return null;}
+function sniCodes(c){return [...new Set([c.sni,...String(c.sniAll||"").split(/[|,; ]+/)].map(s=>String(s||"").replace(/\D/g,"")).filter(Boolean))];}
+function genFlows(c){
+  const seen=new Set();let n=0;
+  for(const code of sniCodes(c)){const r=sniRow(code);if(!r)continue;
+    for(const [dir,list] of [["out",r[3]],["in",r[4]]]) for(const m of list){const k=dir+m;if(seen.has(k))continue;seen.add(k);
+      S.flows.push({id:S.nextId++,company:c.id,dir,material:MATS[m],desc:"",qty:null,unit:"",handling:"",src:"sni",code});n++;}}
+  return n;
+}
+const flowDesc=f=>f.desc||(f.src==="sni"?((sniRow(f.code)||[])[f.dir==="out"?5:6]||""):"");
+
+function demo(){
+  const c = [
+    [1,"Östgöta Rotfrukter (demo)","10390","Linköping",58.482,15.515],
+    [2,"Slätten Biogas (demo)","35210","Linköping",58.431,15.69],
+    [3,"Stångå Bryggeri (demo)","11050","Linköping",58.402,15.60],
+    [4,"Bråviken Växthus (demo)","01130","Norrköping",58.615,16.26],
+    [5,"Motala Sågverk (demo)","16101","Motala",58.552,15.07],
+    [6,"Finspång Pellets & Värme (demo)","35300","Finspång",58.705,15.78],
+    [7,"Mjölby Lantbruk ek. för. (demo)","01500","Mjölby",58.318,15.16],
+    [8,"Norrköping Pappersbruk (demo)","17120","Norrköping",58.588,16.15],
+    [9,"Skänninge Mejeri (demo)","10510","Mjölby",58.395,15.09]
+  ].map(r=>({id:r[0],name:r[1],sni:r[2],municipality:r[3],lat:r[4],lon:r[5],sector:"",notes:"Fictional example"}));
+  const f = [
+    [1,"out",0,"Rejected and trimmed root vegetables",1200,"t/yr","Animal feed / composted"],
+    [1,"in",3,"Packaging board",150,"t/yr","Purchased new"],
+    [2,"in",0,"Food-industry substrate",20000,"t/yr",""],
+    [2,"in",1,"Liquid manure",15000,"t/yr",""],
+    [2,"out",16,"Biofertiliser",30000,"t/yr","Spread on farmland"],
+    [2,"out",15,"CO₂ from gas upgrading",3000,"t/yr","Vented"],
+    [3,"out",0,"Spent grain (drav)",800,"t/yr","Given to local farmer"],
+    [3,"in",15,"Food-grade CO₂",150,"t/yr","Purchased"],
+    [3,"out",13,"Low-grade heat from cooling",1200,"MWh/yr","Released"],
+    [4,"in",13,"Greenhouse heating",5000,"MWh/yr","District heating"],
+    [4,"in",15,"CO₂ enrichment",500,"t/yr","Purchased"],
+    [5,"out",2,"Sawdust and bark",6000,"t/yr","Sold as fuel"],
+    [5,"out",13,"Kiln exhaust heat",3000,"MWh/yr","Released"],
+    [6,"in",2,"Pellet raw material",10000,"t/yr",""],
+    [6,"out",8,"Bio-ash",400,"t/yr","Landfill cover"],
+    [7,"out",1,"Cattle and pig manure",9000,"t/yr","Spread untreated"],
+    [7,"in",16,"Biofertiliser",25000,"t/yr","Mineral fertiliser today"],
+    [7,"in",8,"Nutrient return to fields",200,"t/yr",""],
+    [8,"out",13,"Process heat 40–60 °C",40000,"MWh/yr","Released to water"],
+    [8,"out",9,"Fibre sludge",5000,"t/yr","Incinerated"],
+    [8,"out",3,"Off-spec board",300,"t/yr","Recycled"],
+    [9,"out",0,"Whey and dairy residues",2500,"t/yr","Animal feed"],
+    [9,"out",14,"Rinse water",40000,"m³/yr","Municipal treatment"]
+  ].map((r,i)=>({id:i+1,company:r[0],dir:r[1],material:MATS[r[2]],desc:r[3],qty:r[4],unit:r[5],handling:r[6]}));
+  return {companies:c,flows:f,status:{"5>17":"established","6>8":"discussion"},maxDist:75,nextId:100};
+}
+
+let S = load(), CI = new Map(), ALL = null;
+function load(){
+  try{const s = JSON.parse(localStorage.getItem(KEY)); if(s && s.companies) return norm(s);}catch(e){}
+  return demo();
+}
+function pack(){return JSON.stringify({...S,flows:S.flows.filter(f=>f.src!=="sni"),sf:S.flows.filter(f=>f.src==="sni").map(f=>[f.id,f.company,f.dir==="out"?1:0,MATS.indexOf(f.material),f.code])});}
+function norm(s){s.companies=s.companies||[];s.flows=s.flows||[];
+  if(s.sf){for(const a of s.sf)s.flows.push({id:a[0],company:a[1],dir:a[2]?"out":"in",material:MATS[a[3]],desc:"",qty:null,unit:"",handling:"",src:"sni",code:a[4]});delete s.sf;}s.status=s.status||{};s.maxDist=s.maxDist||75;
+  let mx=s.nextId||1;for(const c of s.companies)if(c.id>=mx)mx=c.id+1;for(const f of s.flows)if(f.id>=mx)mx=f.id+1;s.nextId=mx;return s;}
+function save(){
+  let ok=true;try{localStorage.setItem(KEY,pack());}catch(e){ok=false;}
+  banner(ok?"":"This data set is too large for the browser's automatic storage. Use Data → Export project to save your work, and Import project to reopen it.");
+  renderAll();
+}
+function banner(t){$("banner").textContent=t;$("banner").style.display=t?"block":"none";}
+const $ = id=>document.getElementById(id);
+const esc = v=>String(v==null?"":v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const num = v=>v==null||v===""||isNaN(v)?"":Number(v).toLocaleString("en-GB",{maximumFractionDigits:1});
+const comp = id=>CI.get(id);
+function hashColor(str,list){let h=0;for(const ch of String(str))h=(h*31+ch.charCodeAt(0))>>>0;return list[h%list.length];}
+const matKey = m=>String(m).trim().toLowerCase();
+const MATI = new Map(MATS.map((m,i)=>[matKey(m),i]));
+const matColor = m=>{const i=MATI.get(matKey(m));return i==null?hashColor(m,PALETTE):MAT_COL[i];};
+const catOf = c=>{const r=sniRow(c.sni);return r?r[1]:(c.sector||"Unclassified");};
+const catColor = k=>CAT_COL[k]||hashColor(k,PALETTE);
+function km(a,b){const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLon=(b.lon-a.lon)*r;
+  const x=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
+
+/* ---- streams: every output matched with every input of the same material ---- */
+function allStreams(){
+  if(ALL) return ALL;
+  const ins=new Map(), out=[], stO=new Set(Object.keys(S.status).map(k=>+k.split(">")[0])), lim=S.maxDist/111;
+  for(const f of S.flows) if(f.dir==="in"){const k=matKey(f.material);if(!ins.has(k))ins.set(k,[]);ins.get(k).push(f);}
+  for(const o of S.flows){ if(o.dir!=="out") continue;
+    const cand=ins.get(matKey(o.material)); if(!cand) continue; const a=comp(o.company); if(!a) continue;
+    const near=[], hasSt=stO.has(o.id), oEst=o.src==="sni"?1:0;
+    for(const i of cand){ if(i.company===o.company) continue; const b=i._c||comp(i.company); if(!b) continue;
+      const key=hasSt?o.id+">"+i.id:"", status=(hasSt&&S.status[key])||"potential";
+      if(status==="potential" && Math.abs(a.lat-b.lat)>lim) continue;
+      const d=km(a,b); if(status==="potential" && d>S.maxDist) continue;
+      const est=oEst+(i.src==="sni"?1:0);
+      if(est===2 && status==="potential"){ /* both sides only estimated: keep the nearest few receivers */
+        if(near.length<NEAREST||d<near[near.length-1].d){near.push({i,b,d});near.sort((p,q)=>p.d-q.d);if(near.length>NEAREST)near.pop();}
+        continue; }
+      const same=(o.unit||"")===(i.unit||"");
+      const qty=same&&o.qty>0&&i.qty>0?Math.min(o.qty,i.qty):(same?(o.qty||i.qty||null):null);
+      out.push({key:o.id+">"+i.id,o,i,a,b,d,status,material:o.material,qty,unit:same?o.unit:"",est});
+    }
+    for(const x of near) out.push({key:o.id+">"+x.i.id,o,i:x.i,a,b:x.b,d:x.d,status:"potential",material:o.material,qty:null,unit:"",est:2});
+  }
+  const rank={established:0,discussion:1,potential:2,rejected:3};
+  return ALL=out.sort((x,y)=>rank[x.status]-rank[y.status]||x.est-y.est||x.d-y.d);
+}
+function streams(){
+  const m=matKey($("f-mat").value), st=$("f-status").value, bs=$("f-basis").value;
+  return allStreams().filter(s=>(!m||matKey(s.material)===m) && (st==="all"||(st==="active"?s.status!=="rejected":s.status===st)) && (bs==="all"||(bs==="conf"?s.est===0:s.est<2)));
+}
+function statusSelect(s){return `<select data-skey="${s.key}">`+Object.keys(STATUS).map(k=>`<option value="${k}"${k===s.status?" selected":""}>${STATUS[k]}</option>`).join("")+"</select>";}
+document.addEventListener("change",e=>{const k=e.target.dataset&&e.target.dataset.skey;if(k){S.status[k]=e.target.value;save();}});
+const estTag=s=>s.est?` <span class="tag sni">${s.est===2?"SNI estimate":"partly estimated"}</span>`:"";
+
+/* ---- map ---- */
+const MAXLINES=1500, NEAREST=3;
+let map=null,layer=null,picking=false,selected=null,fitted=false;
+function initMap(){
+  if(typeof L==="undefined"){ $("map").innerHTML='<div style="padding:30px" class="muted">The map library could not be loaded. Check the internet connection and reload: the map needs it for Leaflet and the OpenStreetMap background. Everything else works offline.</div>'; return; }
+  map=L.map("map",{preferCanvas:true}).setView([58.45,15.6],9);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+  layer=L.layerGroup().addTo(map);
+  map.on("click",e=>{ if(!picking) return; picking=false; banner(""); map.getContainer().style.cursor="";
+    const f=$("c-form"); f.lat.value=e.latlng.lat.toFixed(5); f.lon.value=e.latlng.lng.toFixed(5); show("companies"); f.name.focus(); });
+  const lg=L.control({position:"bottomleft"}); lg.onAdd=()=>{const d=L.DomUtil.create("div","legend");d.id="legend";L.DomEvent.disableScrollPropagation(d);return d;}; lg.addTo(map);
+}
+function renderMap(){
+  const list=streams();
+  if(map){
+    layer.clearLayers();
+    const hasFlow=new Set(S.flows.map(f=>f.company));
+    for(const s of list.slice(0,MAXLINES)){
+      const st={color:matColor(s.material),weight:s.status==="established"?5:s.est===2?1.5:3,opacity:s.status==="rejected"?.25:s.est===2?.45:.8,
+        dashArray:s.status==="potential"?"6 7":s.status==="discussion"?"2 6":null,interactive:list.length<600};
+      const pl=L.polyline([[s.a.lat,s.a.lon],[s.b.lat,s.b.lon]],st).addTo(layer);
+      if(st.interactive) pl.bindPopup(`<b>${esc(s.material)}</b> · ${STATUS[s.status]}${s.est?" · SNI estimate":""}<br>${esc(s.a.name)} → ${esc(s.b.name)}<br>${s.qty?num(s.qty)+" "+esc(s.unit)+" · ":""}${s.d.toFixed(0)} km`);
+    }
+    const cats=new Set();
+    for(const c of S.companies){const k=catOf(c);cats.add(k);
+      L.circleMarker([c.lat,c.lon],{radius:hasFlow.has(c.id)?Math.min(12,5+(+c.empk||2)*0.9):3.5,color:c.id===selected?"#000":"#fff",weight:c.id===selected?3:1.5,fillColor:catColor(k),fillOpacity:hasFlow.has(c.id)?1:.6}).addTo(layer)
+        .bindTooltip(esc(c.name)).on("click",()=>{selected=c.id;renderMap();});
+    }
+    if(!fitted && S.companies.length){fitted=true;map.fitBounds(S.companies.map(c=>[c.lat,c.lon]),{padding:[40,40],maxZoom:13});}
+    const mats=[...new Set(list.slice(0,MAXLINES).map(s=>s.material))];
+    const el=$("legend"); if(el) el.innerHTML="<b>Companies</b>"+[...cats].sort().map(k=>`<div><span class="dot" style="background:${catColor(k)}"></span>${esc(k)}</div>`).join("")
+      +(mats.length?"<b>Streams</b>"+mats.map(m=>`<div><span style="display:inline-block;width:14px;height:3px;background:${matColor(m)};margin-right:6px;vertical-align:middle"></span>${esc(m)}</div>`).join(""):"")
+      +`<div class="muted" style="border-top:1px solid #ddd;margin-top:4px">━ established &nbsp;┅ discussion &nbsp;╌ potential<br>thin lines: SNI estimates</div>`;
+  }
+  renderSide(list);
+}
+function flowLine(f){return `<div style="margin-bottom:3px"><span class="dot" style="background:${matColor(f.material)}"></span><b>${esc(f.material)}</b> ${f.qty?num(f.qty)+" "+esc(f.unit):""}${f.src==="sni"?' <span class="tag sni">SNI estimate</span>':""}<div class="small muted" style="margin-left:16px">${esc(flowDesc(f))}${f.handling?" · "+esc(f.handling):""}</div></div>`;}
+function renderSide(list){
+  list=list||streams(); const c=selected&&comp(selected); let h="";
+  if(c){
+    const fl=S.flows.filter(f=>f.company===c.id), mine=list.filter(s=>s.a.id===c.id||s.b.id===c.id), r=sniRow(c.sni);
+    h+=`<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><h2>${esc(c.name)}</h2><button class="b s" onclick="selected=null;renderMap()">✕</button></div>
+      <div class="small"><span class="dot" style="background:${catColor(catOf(c))}"></span>${esc(catOf(c))}</div>
+      <div class="muted small">${c.sni?"SNI "+esc(c.sni)+(r?" · "+esc(r[0])+" · "+REL[r[2]]+" symbiosis relevance":" · not in lookup table"):"No SNI code"}</div>
+      <div class="muted small">${[c.address,c.municipality,c.emp?c.emp+" employees":""].filter(Boolean).map(esc).join(" · ")}</div>${c.notes?`<div class="small">${esc(c.notes)}</div>`:""}
+      <h3>Outputs</h3>${fl.filter(f=>f.dir==="out").map(flowLine).join("")||"<span class='muted small'>None recorded</span>"}
+      <h3>Inputs</h3>${fl.filter(f=>f.dir==="in").map(flowLine).join("")||"<span class='muted small'>None recorded</span>"}
+      <p><button class="b s" onclick="editCompany(${c.id})">Edit company</button> <button class="b s" onclick="newFlow(${c.id})">Add input/output</button> <button class="b s" onclick="showFlows(${c.id})">Edit flows</button></p>
+      <h3>Possible partners (${mine.length})</h3>${mine.slice(0,150).map(s=>streamRow(s,c.id)).join("")||"<span class='muted small'>No matches with current filters</span>"}${mine.length>150?`<p class="small muted">Showing the first 150.</p>`:""}`;
+  } else {
+    const n=k=>list.filter(s=>s.status===k).length;
+    h+=`<h2>Overview</h2><div class="muted small">${num(S.companies.length)} companies · ${num(S.flows.length)} inputs/outputs (${num(S.flows.filter(f=>f.src==="sni").length)} estimated from SNI)</div>
+      <p><span class="tag established">${num(n("established"))} established</span> <span class="tag discussion">${num(n("discussion"))} under discussion</span> <span class="tag potential">${num(n("potential"))} potential</span></p>
+      <p class="small muted">Click a company for its flows and possible partners. Potential streams are limited to ${S.maxDist} km; where both sides are only SNI estimates, each output is linked to its ${NEAREST} nearest possible receivers.${list.length>MAXLINES?` The map draws the first ${MAXLINES} of ${num(list.length)} streams: narrow down with the material, basis or distance filters.`:""}</p>
+      <h3>Streams</h3>${list.slice(0,150).map(s=>streamRow(s)).join("")||"<span class='muted small'>No streams match the filters</span>"}${list.length>150?`<p class="small muted">Showing the first 150 of ${num(list.length)}.</p>`:""}`;
+  }
+  $("side").innerHTML=h;
+}
+function streamRow(s,me){const other=me?(s.a.id===me?"→ "+esc(s.b.name):"← "+esc(s.a.name)):esc(s.a.name)+" → "+esc(s.b.name);
+  return `<div class="stream" onclick="focusStream('${s.key}')"><span class="dot" style="background:${matColor(s.material)}"></span><b>${esc(s.material)}</b> <span class="tag ${s.status}">${STATUS[s.status]}</span>${estTag(s)}
+  <div class="small">${other}</div><div class="small muted">${s.qty?num(s.qty)+" "+esc(s.unit)+" · ":""}${s.d.toFixed(1)} km</div></div>`;}
+function focusStream(k){const s=allStreams().find(x=>x.key===k); if(s&&map) map.fitBounds([[s.a.lat,s.a.lon],[s.b.lat,s.b.lon]],{padding:[80,80],maxZoom:14});}
+
+/* ---- sankey ---- */
+const COUNT="number of matches";
+function renderSankey(){
+  const all=streams(), units=[...new Set(all.filter(s=>s.qty>0).map(s=>s.unit)),COUNT], us=$("f-unit");
+  const cur=units.includes(us.value)?us.value:units[0];
+  us.innerHTML=units.map(u=>`<option${u===cur?" selected":""}>${esc(u)}</option>`).join("");
+  const cnt=cur===COUNT, list=cnt?all:all.filter(s=>s.qty>0&&s.unit===cur), box=$("sankey"), val=s=>cnt?1:s.qty;
+  if(!list.length){box.innerHTML="<p class='muted'>No streams match the current filters.</p>";return;}
+  const TOP=18, top=side=>{const t=new Map();for(const s of list)t.set(s[side].id,(t.get(s[side].id)||0)+val(s));
+    return new Set([...t].sort((p,q)=>q[1]-p[1]).slice(0,TOP).map(x=>x[0]));}, keepA=top("a"), keepB=top("b");
+  const cols=[new Map(),new Map(),new Map()], links=new Map();
+  const node=(ci,id,label,color)=>{if(!cols[ci].has(id))cols[ci].set(id,{label,color,v:0,yo:0,yi:0,n:0});return cols[ci].get(id);};
+  for(const s of list){const v=val(s);
+    const A=keepA.has(s.a.id)?node(0,s.a.id,s.a.name,"#7d8a82"):node(0,"other","Other suppliers","#c4cbc6");
+    const M=node(1,matKey(s.material),s.material,matColor(s.material));
+    const B=keepB.has(s.b.id)?node(2,s.b.id,s.b.name,"#7d8a82"):node(2,"other","Other receivers","#c4cbc6");
+    A.v+=v;M.v+=v;B.v+=v;
+    for(const [k,x,y,side] of [["a"+(keepA.has(s.a.id)?s.a.id:"o")+"|"+matKey(s.material),A,M,0],["b"+matKey(s.material)+"|"+(keepB.has(s.b.id)?s.b.id:"o"),M,B,1]]){
+      if(!links.has(k))links.set(k,{x,y,side,v:0,n:0,firm:0});const l=links.get(k);l.v+=v;l.n++;if(s.status==="established")l.firm+=v;}
+  }
+  const W=Math.max(700,box.clientWidth||900),gap=12,nw=12,maxN=Math.max(...cols.map(c=>c.size)),H=Math.max(260,maxN*34);
+  const tot=[...cols[1].values()].reduce((t,n)=>t+n.v,0),sc=(H-(maxN-1)*gap)/tot,x=[190,W/2-nw/2,W-190-nw];
+  let svg=`<svg viewBox="0 0 ${W} ${H+24}" width="100%">`;
+  cols.forEach(c=>{const used=tot*sc+(c.size-1)*gap;let y=(H-used)/2+16;
+    for(const n of [...c.values()].sort((a,b)=>(a.label.startsWith("Other ")?1:0)-(b.label.startsWith("Other ")?1:0)||b.v-a.v)){n.y=y;n.h=Math.max(2,n.v*sc);y+=n.h+gap;}});
+  const ls=[...links.values()].sort((p,q)=>p.side-q.side||p.x.y-q.x.y||p.y.y-q.y.y);
+  for(const l of ls){const w=l.v*sc,x1=x[l.side]+nw,x2=x[l.side+1],y1=l.x.y+l.x.yo+w/2,y2=l.y.y+l.y.yi+w/2,mx=(x1+x2)/2,col=l.side?l.x.color:l.y.color;
+    svg+=`<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="${Math.max(1.5,w)}" stroke-opacity="${l.firm>=l.v?.7:.35}"><title>${esc(l.x.label)} → ${esc(l.y.label)}: ${num(l.v)} ${esc(cur)}</title></path>`;
+    l.x.yo+=w;l.y.yi+=w;}
+  cols.forEach((c,ci)=>{for(const n of c.values()){
+    svg+=`<rect x="${x[ci]}" y="${n.y}" width="${nw}" height="${n.h}" fill="${n.color}" rx="2"><title>${esc(n.label)}: ${num(n.v)} ${esc(cur)}</title></rect>`;
+    const tx=ci===0?x[0]-6:ci===2?x[2]+nw+6:x[1]+nw/2, an=ci===0?"end":ci===2?"start":"middle", ty=ci===1?n.y-4:n.y+n.h/2+4;
+    const lab=n.label.length>28&&ci!==1?n.label.slice(0,27)+"…":n.label;
+    svg+=`<text x="${tx}" y="${ty}" text-anchor="${an}"${ci===1?' font-weight="600"':""}>${esc(lab)}${ci===1?" · "+num(n.v):""}</text>`;}});
+  box.innerHTML=svg+`</svg><div class='small muted'>Strong bands: established. Faint bands: potential or under discussion. The ${TOP} largest suppliers and receivers are shown by name; the rest are grouped. Hover for values.</div>`;
+}
+function renderStreamsTable(){
+  const list=streams(), CAP=400;
+  $("streams-table").innerHTML=list.length?`<table><tr><th>Material</th><th>From (output)</th><th>To (input)</th><th>Quantity</th><th>Distance</th><th>Basis</th><th>Status</th></tr>`+
+    list.slice(0,CAP).map(s=>`<tr><td><span class="dot" style="background:${matColor(s.material)}"></span>${esc(s.material)}</td><td>${esc(s.a.name)}<div class="small muted">${esc(flowDesc(s.o))}</div></td><td>${esc(s.b.name)}<div class="small muted">${esc(flowDesc(s.i))}</div></td>
+    <td class="n">${s.qty?num(s.qty)+" "+esc(s.unit):"–"}</td><td class="n">${s.d.toFixed(1)} km</td><td>${s.est?estTag(s):"Confirmed"}</td><td>${statusSelect(s)}</td></tr>`).join("")+"</table>"+(list.length>CAP?`<p class="small muted">Showing the first ${CAP} of ${num(list.length)} streams. Use the filters to narrow down, or export the full list from the Data tab.</p>`:""):"<p class='muted'>No streams match the filters.</p>";
+}
+
+/* ---- companies ---- */
+function renderCompanies(){
+  const q=$("c-search").value.trim().toLowerCase(), CAP=300, nf=new Map();
+  for(const f of S.flows)nf.set(f.company,(nf.get(f.company)||0)+1);
+  const rows=q?S.companies.filter(c=>(c.name+" "+c.sni+" "+c.municipality+" "+catOf(c)).toLowerCase().includes(q)):S.companies;
+  $("c-table").innerHTML=rows.length?`<table><tr><th>Name</th><th>Waste category</th><th>SNI</th><th>Municipality</th><th>Employees</th><th>Flows</th><th></th></tr>`+
+    rows.slice(0,CAP).map(c=>{const r=sniRow(c.sni);return `<tr><td>${esc(c.name)}<div class="small muted">${esc(c.address||c.notes)}</div></td><td><span class="dot" style="background:${catColor(catOf(c))}"></span>${esc(catOf(c))}</td><td>${esc(c.sni)}<div class="small muted">${r?esc(r[0]):""}</div></td><td>${esc(c.municipality)}</td>
+    <td>${esc(c.emp)}</td><td class="n">${nf.get(c.id)||0}</td>
+    <td class="n"><button class="b s" onclick="showOnMap(${c.id})">Map</button> <button class="b s" onclick="editCompany(${c.id})">Edit</button> <button class="b s" onclick="delCompany(${c.id},this)">Delete</button></td></tr>`;}).join("")+"</table>"+(rows.length>CAP?`<p class="small muted">Showing ${CAP} of ${num(rows.length)}. Search to find others.</p>`:""):"<p class='muted'>No companies.</p>";
+}
+function showOnMap(id){const c=comp(id);selected=id;show("map");renderMap();if(map)map.setView([c.lat,c.lon],Math.max(map.getZoom(),13));}
+function editCompany(id){const c=comp(id),f=$("c-form");for(const k of ["id","name","sector","sni","municipality","emp","lat","lon","notes"])f[k].value=c[k]==null?"":c[k];$("c-title").textContent="Edit company";show("companies");f.scrollIntoView();}
+function confirmBtn(btn,fn){if(btn.dataset.sure){fn();return;}btn.dataset.sure=1;btn.textContent="Sure?";btn.style.color="var(--warn)";setTimeout(()=>{if(btn.isConnected){delete btn.dataset.sure;btn.textContent="Delete";btn.style.color="";}},3000);}
+function delCompany(id,btn){confirmBtn(btn,()=>{S.companies=S.companies.filter(c=>c.id!==id);S.flows=S.flows.filter(f=>f.company!==id);if(selected===id)selected=null;save();});}
+$("c-form").addEventListener("submit",e=>{e.preventDefault();const f=e.target,d={name:f.name.value.trim(),sector:f.sector.value.trim(),sni:f.sni.value.trim(),municipality:f.municipality.value.trim(),emp:f.emp.value.trim(),lat:+f.lat.value,lon:+f.lon.value,notes:f.notes.value.trim()};
+  if(f.id.value)Object.assign(comp(+f.id.value),d);else S.companies.push({id:S.nextId++,...d});clearC();save();});
+function clearC(){$("c-form").reset();$("c-form").id.value="";$("c-title").textContent="Add company";}
+$("c-cancel").onclick=clearC; $("c-search").oninput=renderCompanies;
+$("c-pick").onclick=()=>{if(!map)return;picking=true;banner("Click the map where the company is located.");show("map");map.getContainer().style.cursor="crosshair";};
+
+/* ---- flows ---- */
+function renderFlows(){
+  if(S.companies.length<=3000)$("companies-list").innerHTML=S.companies.map(c=>`<option>${esc(c.name)}</option>`).join("");
+  $("materials").innerHTML=[...new Set([...MATS,...S.flows.map(x=>x.material)])].map(m=>`<option>${esc(m)}</option>`).join("");
+  const q=$("fl-search").value.trim().toLowerCase(), CAP=300;
+  let rows=S.flows; if(q)rows=rows.filter(x=>(((comp(x.company)||{}).name||"")+" "+x.material).toLowerCase().includes(q));
+  rows=[...rows].sort((a,b)=>(a.src==="sni"?1:0)-(b.src==="sni"?1:0)||a.company-b.company||(a.dir<b.dir?1:-1));
+  $("fl-table").innerHTML=rows.length?`<table><tr><th>Company</th><th>Direction</th><th>Material</th><th>Description</th><th>Quantity</th><th>Current handling / source</th><th></th></tr>`+
+    rows.slice(0,CAP).map(x=>`<tr><td>${esc((comp(x.company)||{}).name)}</td><td>${x.dir==="out"?"Output ↗":"Input ↙"}</td><td><span class="dot" style="background:${matColor(x.material)}"></span>${esc(x.material)}${x.src==="sni"?' <span class="tag sni">SNI estimate</span>':""}</td><td>${esc(flowDesc(x))}</td>
+    <td class="n">${x.qty?num(x.qty)+" "+esc(x.unit):"–"}</td><td>${esc(x.handling)}</td><td class="n"><button class="b s" onclick="editFlow(${x.id})">Edit</button> <button class="b s" onclick="delFlow(${x.id},this)">Delete</button></td></tr>`).join("")+"</table>"+(rows.length>CAP?`<p class="small muted">Showing ${CAP} of ${num(rows.length)} (confirmed flows first). Search to find others.</p>`:""):"<p class='muted'>No inputs or outputs.</p>";
+}
+function editFlow(id){const x=S.flows.find(f=>f.id===id),f=$("fl-form");f.id.value=x.id;f.companyName.value=(comp(x.company)||{}).name||"";f.dir.value=x.dir;f.material.value=x.material;f.desc.value=flowDesc(x);f.qty.value=x.qty==null?"":x.qty;f.unit.value=x.unit||"t/yr";f.handling.value=x.handling||"";$("fl-title").textContent="Edit input or output";f.scrollIntoView();}
+function newFlow(cid){clearF();show("flows");$("fl-form").companyName.value=comp(cid).name;$("fl-form").material.focus();}
+function showFlows(cid){show("flows");$("fl-search").value=comp(cid).name;renderFlows();}
+function delFlow(id,btn){confirmBtn(btn,()=>{S.flows=S.flows.filter(f=>f.id!==id);save();});}
+$("fl-form").addEventListener("submit",e=>{e.preventDefault();const f=e.target,nm=f.companyName.value.trim().toLowerCase(),c=S.companies.find(c=>c.name.toLowerCase()===nm);
+  if(!c){f.companyName.setCustomValidity("Choose an existing company");f.companyName.reportValidity();return;}
+  const d={company:c.id,dir:f.dir.value,material:f.material.value.trim(),desc:f.desc.value.trim(),qty:f.qty.value===""?null:+f.qty.value,unit:f.unit.value.trim(),handling:f.handling.value.trim()};
+  if(f.id.value){const x=S.flows.find(x=>x.id===+f.id.value);delete x.src;delete x.code;Object.assign(x,d);}else S.flows.push({id:S.nextId++,...d});clearF();save();});
+$("fl-form").companyName.oninput=e=>e.target.setCustomValidity("");
+function clearF(){const f=$("fl-form");f.reset();f.id.value="";$("fl-title").textContent="Add input or output";}
+$("fl-cancel").onclick=clearF; $("fl-search").oninput=renderFlows;
+
+/* ---- coordinates: SWEREF 99 TM -> WGS84 ---- */
+function sweref(N,E){
+  const a=6378137,f=1/298.257222101,k0=0.9996,l0=15*Math.PI/180,FE=500000,e2=f*(2-f),n=f/(2-f),ar=a/(1+n)*(1+n*n/4+n**4/64);
+  const d=[n/2-2*n*n/3+37*n**3/96-n**4/360,n*n/48+n**3/15-437*n**4/1440,17*n**3/480-37*n**4/840,4397*n**4/161280];
+  const A=e2+e2**2+e2**3+e2**4,B=-(7*e2**2+17*e2**3+30*e2**4)/6,C=(224*e2**3+889*e2**4)/120,D=-(4279*e2**4)/1260;
+  const xi=N/(k0*ar),eta=(E-FE)/(k0*ar);let xp=xi,ep=eta;
+  d.forEach((v,i)=>{const m=2*(i+1);xp-=v*Math.sin(m*xi)*Math.cosh(m*eta);ep-=v*Math.cos(m*xi)*Math.sinh(m*eta);});
+  const ps=Math.asin(Math.sin(xp)/Math.cosh(ep)),dl=Math.atan(Math.sinh(ep)/Math.cos(xp)),s=Math.sin(ps);
+  return [(ps+s*Math.cos(ps)*(A+B*s*s+C*s**4+D*s**6))*180/Math.PI,(l0+dl)*180/Math.PI];
+}
+function toLatLon(a,b){ if(a==null||b==null) return null;
+  if(Math.abs(a)>1000||Math.abs(b)>1000) return sweref(Math.max(a,b),Math.min(a,b));
+  return a>=b?[a,b]:[b,a]; /* in Sweden latitude is always the larger number */ }
+
+/* ---- data in / out ---- */
+function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();a.remove();}
+const csvCell=v=>{v=v==null?"":String(v);return /[",;\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+const toCSV=(head,rows)=>"﻿"+[head,...rows].map(r=>r.map(csvCell).join(",")).join("\r\n");
+function parseCSV(text){
+  text=text.replace(/^﻿/,"");const first=text.split(/\r?\n/)[0],sep=first.split("\t").length>3?"\t":(first.split(";").length>first.split(",").length)?";":",";
+  const rows=[];let row=[],cell="",q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){cell+='"';i++;}else q=false;}else cell+=ch;}
+    else if(ch==='"')q=true;else if(ch===sep){row.push(cell);cell="";}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&text[i+1]==="\n")i++;row.push(cell);cell="";if(row.some(c=>c.trim()))rows.push(row);row=[];}
+    else cell+=ch;}
+  row.push(cell);if(row.some(c=>c.trim()))rows.push(row);
+  const head=(rows.shift()||[]).map(h=>h.trim().toLowerCase());
+  return rows.map(r=>Object.fromEntries(head.map((h,i)=>[h,(r[i]||"").trim()])));
+}
+function rowsFrom(text){
+  if(/^\s*\{/.test(text)){const g=JSON.parse(text);return (g.features||[]).filter(f=>f.geometry&&f.geometry.type==="Point").map(f=>{const p={};
+    for(const k in f.properties)p[k.toLowerCase()]=f.properties[k]==null?"":String(f.properties[k]);p.__x=f.geometry.coordinates[0];p.__y=f.geometry.coordinates[1];return p;});}
+  return parseCSV(text);
+}
+function pick(r,exact,re){for(const k of exact)if(r[k]!=null&&r[k]!=="")return r[k];if(re)for(const k in r)if(re.test(k)&&r[k]!=="")return r[k];return "";}
+const toNum=v=>{if(typeof v==="number")return v;const n=parseFloat(String(v).replace(/\s/g,"").replace(",","."));return isNaN(n)?null:n;};
+const msg=t=>{$("d-msg").textContent=t;};
+function readFile(input,fn){input.addEventListener("change",()=>{const file=input.files[0];if(!file)return;const r=new FileReader();r.onload=()=>{try{fn(r.result);}catch(e){msg("Could not read the file: "+e.message);}input.value="";};r.readAsText(file);});}
+function importCompanies(text){
+  const rows=rowsFrom(text), level=$("i-level").value, skipSole=$("i-sole").checked, gen=$("i-flows").checked;
+  const sniOf=r=>String(pick(r,["sni","sni_kod","snikod","sni2025","sni2007","ng1"],/^sni(?!.*(text|andel|alla|label))|branschkod/)).replace(/\D/g,"");
+  const maxLen=rows.reduce((m,r)=>Math.max(m,sniOf(r).length),0), have=new Set(S.companies.map(c=>c.cfar).filter(Boolean));
+  let ok=0,noXY=0,sole=0,low=0,dup=0,flows=0;
+  for(const r of rows){
+    if(skipSole && ["1","true","ja"].includes(String(r.enskild_firma||"").toLowerCase())){sole++;continue;}
+    let sni=sniOf(r); if(maxLen===5&&sni.length===4)sni="0"+sni; /* leading zero lost in a spreadsheet */
+    const row=sniRow(sni), rel=row?row[2]:"l";
+    if((level==="h"&&rel!=="h")||(level==="hm"&&rel==="l")){low++;continue;}
+    const ll=toLatLon(r.__y!=null?r.__y:toNum(pick(r,["lat","latitude","north","northing","n","y","nkoord","ykoord","y_koord","sweref_n"])),
+                      r.__x!=null?r.__x:toNum(pick(r,["lon","lng","long","longitude","east","easting","e","x","ekoord","xkoord","x_koord","sweref_e"])));
+    const name=pick(r,["name","namn","företagsnamn","foretagsnamn","benämning","benamning","ben","firma","company"],/namn|name/);
+    if(!ll||!name){noXY++;continue;}
+    const cfar=pick(r,["cfar","cfarnr","cfar_nr"]); if(cfar&&have.has(cfar)){dup++;continue;} if(cfar)have.add(cfar);
+    const c={id:S.nextId++,name,sni,sniAll:r.sni_alla||"",sector:pick(r,["sector","bransch"]),municipality:pick(r,["municipality","kommun_namn","kommunnamn","postort"],/kommun.*(namn|name)/)||r.kommun||"",
+      emp:pick(r,["anstkl_text","employees","anställda","anstallda"]),empk:toNum(r.anstkl),address:[r.gatuadress,r.postort].filter(Boolean).join(", "),cfar,lat:+ll[0].toFixed(6),lon:+ll[1].toFixed(6),notes:r.notes||""};
+    S.companies.push(c); ok++; if(gen)flows+=genFlows(c);
+  }
+  fitted=false; selected=null; if(ok>500&&S.maxDist>20)S.maxDist=20; save();
+  msg(`${num(ok)} workplaces added with ${num(flows)} estimated inputs/outputs. Skipped: ${num(low)} below the chosen relevance, ${num(sole)} sole traders, ${num(noXY)} without name or coordinates, ${num(dup)} already loaded.${ok>500?" Max distance for potential streams was set to "+S.maxDist+" km to keep the map readable.":""}`);
+}
+$("d-export").onclick=()=>download("symbiosis-project.json",pack(),"application/json");
+readFile($("d-import"),t=>{const s=JSON.parse(t);if(!s.companies)throw new Error("not a project file");S=norm(s);fitted=false;selected=null;save();msg(`Project loaded: ${num(S.companies.length)} companies, ${num(S.flows.length)} inputs/outputs.`);});
+readFile($("d-imp-c"),importCompanies);
+$("d-csv-c").onclick=()=>download("companies.csv",toCSV(["cfar","name","sni","sni_label","waste_category","symbiosis_relevance","municipality","employees","address","lat","lon","notes"],S.companies.map(c=>{const r=sniRow(c.sni)||[];return [c.cfar,c.name,c.sni,r[0],catOf(c),REL[r[2]],c.municipality,c.emp,c.address,c.lat,c.lon,c.notes];})),"text/csv");
+$("d-csv-f").onclick=()=>download("inputs-outputs.csv",toCSV(["company","cfar","direction","material","description","qty","unit","handling","basis"],S.flows.map(f=>{const c=comp(f.company)||{};return [c.name,c.cfar,f.dir,f.material,flowDesc(f),f.qty,f.unit,f.handling,f.src==="sni"?"SNI estimate":"confirmed"];})),"text/csv");
+$("d-csv-s").onclick=()=>download("streams.csv",toCSV(["material","from","to","qty","unit","distance_km","status","basis","from_lat","from_lon","to_lat","to_lon","wkt"],streams().map(s=>[s.material,s.a.name,s.b.name,s.qty,s.unit,s.d.toFixed(2),s.status,s.est===0?"confirmed":s.est===1?"partly estimated":"SNI estimate",s.a.lat,s.a.lon,s.b.lat,s.b.lon,`LINESTRING(${s.a.lon} ${s.a.lat}, ${s.b.lon} ${s.b.lat})`])),"text/csv");
+readFile($("d-imp-f"),t=>{let ok=0,bad=0;const byName=new Map(S.companies.map(c=>[c.name.toLowerCase(),c])),byCfar=new Map(S.companies.filter(c=>c.cfar).map(c=>[String(c.cfar),c]));
+  for(const r of parseCSV(t)){const c=byCfar.get(r.cfar||r.company)||byName.get((r.company||"").toLowerCase()),dir=(r.direction||r.dir||"").toLowerCase().startsWith("in")?"in":"out";
+  if(!c||!r.material){bad++;continue;}S.flows.push({id:S.nextId++,company:c.id,dir,material:r.material,desc:r.description||r.desc||"",qty:toNum(r.qty||r.quantity),unit:r.unit||"t/yr",handling:r.handling||""});ok++;}
+  save();msg(`${ok} inputs/outputs added${bad?`, ${bad} rows skipped (unknown company or no material)`:""}.`);});
+$("d-gen").onclick=()=>{const has=new Set(S.flows.map(f=>f.company));let n=0;for(const c of S.companies)if(!has.has(c.id))n+=genFlows(c);save();msg(`${num(n)} estimated inputs/outputs generated.`);};
+$("d-delsni").onclick=function(){confirmReset(this,"Remove all SNI estimates",()=>{S.flows=S.flows.filter(f=>f.src!=="sni");msg("SNI estimates removed. Confirmed flows were kept.");});};
+$("d-demo").onclick=function(){confirmReset(this,"Load demo data",()=>{S=demo();msg("Demo data loaded.");});};
+$("d-clear").onclick=function(){confirmReset(this,"Delete all data",()=>{S=norm({});msg("All data deleted.");});};
+function confirmReset(btn,label,fn){if(btn.dataset.sure){delete btn.dataset.sure;btn.textContent=label;fn();fitted=false;selected=null;save();return;}
+  btn.dataset.sure=1;btn.textContent="Click again to confirm";setTimeout(()=>{delete btn.dataset.sure;btn.textContent=label;},4000);}
+
+/* ---- shell ---- */
+function show(t){document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));
+  document.querySelectorAll("main section").forEach(s=>s.classList.toggle("on",s.id==="tab-"+t));
+  if(t==="map"&&map)setTimeout(()=>map.invalidateSize(),0); if(t==="streams")renderSankey();}
+$("nav").addEventListener("click",e=>{if(e.target.dataset.t)show(e.target.dataset.t);});
+function renderFilters(){const sel=$("f-mat"),cur=sel.value,mats=[...new Set(S.flows.map(f=>f.material))].sort();
+  sel.innerHTML='<option value="">All materials</option>'+mats.map(m=>`<option${m===cur?" selected":""}>${esc(m)}</option>`).join("");$("f-dist").value=S.maxDist;}
+function renderAll(){ALL=null;CI=new Map(S.companies.map(c=>[c.id,c]));renderFilters();renderMap();renderSankey();renderStreamsTable();renderCompanies();renderFlows();}
+$("f-mat").onchange=renderAll;$("f-status").onchange=renderAll;$("f-basis").onchange=renderAll;$("f-unit").onchange=renderSankey;
+$("f-dist").onchange=e=>{S.maxDist=Math.max(1,+e.target.value||75);save();};
+window.addEventListener("resize",()=>{if($("tab-streams").classList.contains("on"))renderSankey();});
+initMap();renderAll();
+</script>
+</body>
+</html>
